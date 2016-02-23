@@ -1,0 +1,98 @@
+    
+This is the code in ApplicationData. This is the code that does the ranging and maintains the cache and closest beacon. The first method is the method that is called whenever a new beacon scan is completed. The next 2 methods are also in the ApplicationData class and used by the first method.
+
+    @Override
+    public void onBeaconServiceConnect() {
+        mBeaconManager.setRangeNotifier(new RangeNotifier() {
+            @Override
+            public void didRangeBeaconsInRegion(Collection<Beacon> beacons, Region region) {
+                if (beacons.size() > 0) {
+
+    // Cycle through all beacons found in the last scan
+                    for (Beacon beacon : beacons) {
+    // Verify we're checking the UUID.  You can turn this check off in Admin tools for 
+    // the staging env
+                        if (mUUIDCheck) {
+    // Verify the UUID is correct
+                            if (beacon.getId1().toString().toUpperCase().equals(BKM_UUID)) {
+                                processBeacon(beacon);
+                            }
+                        } else {
+                            processBeacon(beacon);
+                        }
+                    }
+
+    // Remove timed out beacons from the queue
+                    removeTimedOutBeacons();
+
+    // If the beacon cache is not empty, set the closest beacon
+                    if (bkmBeaconList.size() > 0) {
+                        mClosestBKMBeacon = BeaconUtil.getClosestBeacon(bkmBeaconList);
+                        mClosestBeacon = mClosestBKMBeacon.getBeacon();
+                    }
+                }
+            }
+        });
+
+
+    private void processBeacon(Beacon beacon){
+        List<BKMBeacon> beaconsToRemove = new ArrayList<BKMBeacon>();
+    //  Cycle through the cache and find any beacons that match the beacon we are 
+    //  processing
+        for (BKMBeacon tempBeacon : bkmBeaconList) {
+
+            if (beacon.getId2().toString().equals(tempBeacon.getBeacon().getId2().toString()) && (beacon.getId3().toString().equals(tempBeacon.getBeacon().getId3().toString()))) {
+    //  If the processing beacon is found, add to a list of beacons to remove, in case
+    //  more than 1 got in the cache
+                beaconsToRemove.add(tempBeacon);
+            }
+        }
+
+    //  Remove any duplicates of the processing beacon and add it to the cache
+        bkmBeaconList.removeAll(beaconsToRemove);
+        bkmBeaconList.add(new BKMBeacon(beacon));
+    }
+
+    private void removeTimedOutBeacons(){
+        List<BKMBeacon> beaconsToRemove = new ArrayList<BKMBeacon>();
+    //  Cycle through the beacons in the cache
+        for (BKMBeacon beacon : bkmBeaconList) {
+    //  If the beacon has timed out add it to the list of beacons to be removed
+            if (beacon.hasBeaconTimedOut()) {
+                beaconsToRemove.add(beacon);
+            }
+        }
+
+    //  Removed timed out beacons from the cache
+        bkmBeaconList.removeAll(beaconsToRemove);
+        
+    //  Remove the closestBeacon if it has timed out
+        if (mClosestBKMBeacon != null && mClosestBKMBeacon.hasClosestBeaconTimedOut()) {
+            mClosestBeacon = null;
+            mClosestBKMBeacon = null;
+        }
+    }
+
+
+The following 2 methods are used above, and are in the BKMBeacon class which includes a timestamp for the creation of the beacon, and constants for the timeout values.
+
+    public boolean hasBeaconTimedOut(){
+    //  If this has been in the cache for longer than BEACON_TIMEOUT without an update then return 
+    //  true, else false
+        if ((Calendar.getInstance().getTimeInMillis() - this.mTimeAdded) > BEACON_TIMEOUT){
+            return true;
+        }
+
+        return false;
+    }
+
+    public boolean hasClosestBeaconTimedOut(){
+    //  If the closestBeacon has been in the closest beacon var for longer than 
+    //  CLOSEST_BEACON_TIMEOUT without an update then return true, else false
+        if ((Calendar.getInstance().getTimeInMillis() - this.mTimeAdded) > CLOSEST_BEACON_TIMEOUT){
+            return true;
+        }
+
+        return false;
+    }
+

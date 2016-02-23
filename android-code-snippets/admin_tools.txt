@@ -1,0 +1,151 @@
+This is the code from FragmentAdminTools:
+
+    @Override
+    public void onViewCreated(View view, Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+
+    //  Set all buttons/switched to use the OnClickListener defined in this class
+    //  Set all switches to their value stored in AdminPrefs
+        view.findViewById(R.id.bt_reset_chat).setOnClickListener(this);
+        view.findViewById(R.id.bt_rate_app).setOnClickListener(this);
+        view.findViewById(R.id.bt_reset_beacons).setOnClickListener(this);
+        Switch geoSwitch = (Switch) view.findViewById(R.id.geo_fence_switch);
+        geoSwitch.setChecked(AdminPrefs.isGeoFenceEnabled());
+        geoSwitch.setOnCheckedChangeListener(this);
+
+        Switch rangeBeaconsSwitch = (Switch) view.findViewById(R.id.beacon_range_switch);
+        rangeBeaconsSwitch.setChecked(AdminPrefs.isBeaconRangeEnabled());
+        rangeBeaconsSwitch.setOnCheckedChangeListener(this);
+        beaconRangeLayout = (RelativeLayout) view.findViewById(R.id.beacon_range_layout);
+
+        Switch uuidSwitch = (Switch) view.findViewById(R.id.uuid_check_switch);
+        uuidSwitch.setChecked(AdminPrefs.isUUIDCheckEnabled());
+        uuidSwitch.setOnCheckedChangeListener(this);
+
+        Switch defaultBeaconSwitch = (Switch) view.findViewById(R.id.default_beacon_switch);
+        defaultBeaconSwitch.setChecked(AdminPrefs.isDefaultBeaconEnabled());
+        defaultBeaconSwitch.setOnCheckedChangeListener(this);
+
+        rangeBeaconsSwitch.setChecked(AdminPrefs.isBeaconRangeEnabled());
+    //  If rangeBeaconSwitch is checked, show ranged beacons
+        if (rangeBeaconsSwitch.isChecked()){
+            rangeBeacons(true, beaconRangeLayout);
+        }
+    }
+
+    private void rangeBeacons(boolean isRangingBeacons, View view) {
+
+        try {
+            if (isRangingBeacons) {
+    // Make the beacon view visible
+                view.setVisibility(View.VISIBLE);
+    //  pass the beacon cache from ApplicationData to the adapter to be displayed
+                List<BKMBeacon> beaconList = applicationData.getBkmBeaconList();
+                ArrayList<BKMBeacon> beaconListClone = new ArrayList<BKMBeacon>(beaconList);
+                mBeaconListAdapter = new BeaconListAdapter(applicationData, beaconListClone);
+                mBeaconListView = (ListView) getView().findViewById(R.id.beaconListView);
+                mBeaconListView.setAdapter(mBeaconListAdapter);
+
+                handler = new android.os.Handler();
+    //  Start ranging handler that updates the beacon view
+                handler.postDelayed(updateTimerThread, 0);
+            } else {
+    //  Make the beacon view gone
+                view.setVisibility(View.GONE);
+                mBeaconListAdapter = null;
+                mBeaconListView = null;
+    //  Stop ranging handler
+                handler.removeCallbacks(updateTimerThread);
+
+            }
+        } catch (Exception e) {
+            Log.e(e.getStackTrace().toString());
+        }
+    }
+
+    private Runnable updateTimerThread = new Runnable() {
+        public void run() {
+    //  Update the beacon list every second
+            updateBeaconList();
+            handler.postDelayed(this, 1000);
+        }
+    };
+
+    private void updateBeaconList(){
+        final Beacon closestBeacon = applicationData.getMClosestBeacon();
+        if (closestBeacon != null) {
+            String closestBeaconStr = closestBeacon.getId3().toString();
+    //  Set closest beacon id text value
+            ((TextView) getView().findViewById(R.id.closestBeaconId)).setText(closestBeaconStr);
+            List<BKMBeacon> beaconList = applicationData.getBkmBeaconList();
+            ArrayList<BKMBeacon> beaconListClone = new ArrayList<BKMBeacon>(beaconList);
+    // Set the current ApplicationData cache to the adapter
+            mBeaconListAdapter.setMBeaconList(beaconListClone);
+            mBeaconListAdapter.notifyDataSetChanged();
+        } else {
+    // If there is no closest beacon, reset all beacon values to empty
+            ((TextView) getView().findViewById(R.id.closestBeaconId)).setText(" No Beacon in Range");
+            List<BKMBeacon> beaconList = applicationData.getBkmBeaconList();
+            ArrayList<BKMBeacon> beaconListClone = new ArrayList<BKMBeacon>(beaconList);
+
+            if (mBeaconListAdapter != null) {
+                mBeaconListAdapter.setMBeaconList(beaconListClone);
+                mBeaconListAdapter.notifyDataSetChanged();
+            }
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        if (handler != null) {
+    //  Stop ranging updates
+            handler.removeCallbacks(updateTimerThread);
+        }
+    }
+
+    @Override
+    public void onClick(View view) {
+        switch (view.getId()) {
+            case R.id.bt_reset_chat:
+    //  Reset all chat values
+                ChatPrefs.clearCurrentChat();
+                ChatLogPrefs.clearCurrentChat();
+                AdminPrefs.setResetChatTime();
+                break;
+            case R.id.bt_rate_app:
+    //  Pop up rate up dialog
+                final Intent intent = new Intent(GcmListener.GcmMsgType.RATE_APP.name());
+                LocalBroadcastManager.getInstance(getActivity()).sendBroadcast(intent);
+                break;
+            case R.id.bt_reset_beacons:
+    //  Clear all beacons and closest beacon in ApplicationData
+                applicationData.getBkmBeaconList().clear();
+                applicationData.setMClosestBeacon(null);
+                updateBeaconList();
+        }
+    }
+
+    @Override
+    public void onCheckedChanged(CompoundButton compoundButton, boolean checked) {
+        switch (compoundButton.getId()) {
+            case R.id.geo_fence_switch:
+    //  Enable/disable geo fence
+                AdminPrefs.setGeoFenceEnabled(checked);
+                break;
+            case R.id.beacon_range_switch:
+    //  Enable/dsable beacon ranging layout
+                rangeBeacons(checked, beaconRangeLayout);
+                AdminPrefs.setBeaconRangeEnabled(checked);
+                break;
+            case R.id.uuid_check_switch:
+    //  Enable/disable BKM UUID check
+                AdminPrefs.setUUIDCheckEnabled(checked);
+                applicationData.setUuidCheck(checked);
+                break;
+            case R.id.default_beacon_switch:
+    //  Enable/disable default beacon
+                AdminPrefs.setDefaultBeaconEnabled(checked);
+                break;
+        }
+    }

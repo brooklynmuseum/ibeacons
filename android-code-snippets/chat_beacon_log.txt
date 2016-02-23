@@ -1,0 +1,103 @@
+Updated code including invalid beacon info.
+
+    @Override
+    public void onResume(){
+        super.onResume();
+        setBeaconInfo();
+
+    }
+
+    @Override
+    public void onClick(View view) {
+        switch (view.getId()) {
+            case R.id.bt_reset_chat:
+                    //  Clear chat data from this activity and the chat activity
+                ChatLogPrefs.clearCurrentChat();
+                ChatPrefs.clearCurrentChat();
+                AdminPrefs.setResetChatTime();
+                ((ChatLogListAdapter) mChatLogView.getAdapter()).clearChatLog();
+                    //  Set counts to zero
+                mWithCount.setText(ZERO);
+                mWithoutCount.setText(ZERO);
+                mWithInvalidCount.setText(ZERO);
+                ((ChatLogListAdapter) mChatLogView.getAdapter()).notifyDataSetChanged();
+                break;
+        }
+    }
+
+    private void setBeaconInfo() {
+    // Call service to return all beacons grouped by major id
+        ApiClient.getClient().getBeacons(ApplicationData.BKM_UUID).enqueue(
+            new Callback<JsonElement>() {
+                @Override
+                public void onResponse(Response<JsonElement> response,
+                                       Retrofit retrofit) {
+                    if (response.isSuccess()) {
+    //  Get JsonElement from the server response
+                        JsonElement jData = JsonUtils.extractDataFromResponseBody(response.body());
+                        final Gson gson = new Gson();
+                        Type listType = new TypeToken<ArrayList<BeaconInfo>>() {
+                        }.getType();
+    //  Convert  the json into a list of BeaconInfo objs.  Beacon info has a major id and list of minor ids
+                        List<BeaconInfo> beaconInfoList = gson.fromJson(jData.getAsJsonObject().get("IBeaconGroupList"), listType);
+    // Loop through the list of beacons and create a map of known beacon based on major id
+                        for (BeaconInfo beaconInfo : beaconInfoList) {
+                            mBeaconInfoMap.put(beaconInfo.getMajor(), beaconInfo);
+                        }
+
+    //  Get current ChatMessage list
+                        List<ChatMessage> chatMessages = ChatLogPrefs.getCurrentChatAsList();
+    //  Reverse list to list from most recent to oldest
+                        Collections.reverse(chatMessages);
+                        ChatLogListAdapter chatLogListAdapter = new ChatLogListAdapter(getActivity(), chatMessages, mViewMessage.isChecked(), mBeaconInfoMap);
+
+                        int withCount = 0;
+                        int withoutCount = 0;
+                        int withInvalidCount = 0;
+
+    //  Set counts for messages with/without/invalid beacon data
+                        for (ChatMessage message : chatMessages){
+                            if (message.getIbeaconMinor() != null && !message.getIbeaconMinor().equals("")){
+                                if (BeaconUtil.isKnownBeacon(message.getIbeaconMajor(), message.getIbeaconMinor(), mBeaconInfoMap)) {
+                                    withCount++;
+                                } else {
+                                    withInvalidCount++;
+                                }
+                            } else {
+                                withoutCount++;
+                            }
+                        }
+
+                        mWithCount.setText(withCount + "");
+                        mWithoutCount.setText(withoutCount + "");
+                        mWithInvalidCount.setText(withInvalidCount + "");
+
+                        mChatLogView.setAdapter(chatLogListAdapter);
+                        ((ChatLogListAdapter) mChatLogView.getAdapter()).notifyDataSetChanged();
+                    } else {
+                        Log.d(response.errorBody().toString());
+                    }
+                }
+            });
+    }
+
+
+In reference to the BeaconUtil.isKnownBeacon call in the setBeaconInfo method:
+
+    public static boolean isKnownBeacon(String majorId, String minorId, Map<String, BeaconInfo> beaconInfoMap)
+    {
+    // Get the BeaconInfo using the majorId as the key
+        if (beaconInfoMap.get(majorId) != null) {
+    //  Cycle through the minor code list for this major code
+            for (BeaconInfo.BeaconMinor beaconMinor : beaconInfoMap.get(majorId).getBeaconMinors()) {
+    // If the minor beacon is found then return true
+                if (beaconMinor.getMinor().equals(minorId)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+
+

@@ -1,0 +1,150 @@
+//Admin Tools class. We can enable the geofence here, disable beacon ranging, switch to test UUID of beacons.We show the cache array of beacons.
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    self.menuBarView = [[NSBundle mainBundle] loadNibNamed:@"BKMTopBarView" owner:nil options:nil][0];
+    [self.view addSubview:self.menuBarView];
+    self.menuBarView.delegate = self;
+    
+	//Initial settings
+    self.geofenceSwitch.on = [BKMGeoFenceManager sharedInstance].geofenceEnabled;
+    self.beaconSwitch.on = YES;
+    self.uuidSwitch.on = YES;
+	//Starts the timer
+    [self startUpBeaconsCheckTimer];
+    
+    [self.beaconsTableView registerNib:[UINib nibWithNibName:@"BKMBeaconsTableViewCell" bundle:nil] forCellReuseIdentifier:@"beaconInfoCell"];
+    
+	//Array of beacons
+    self.beacons = [[BKMBeaconManager sharedInstance]getBeaconsCache];
+    
+    [self.beaconsTableView reloadData];
+    
+}
+//Invalidate timer
+- (void)viewDidDisappear:(BOOL)animated
+{
+    if (checkBeaconsTimer) {
+        NSLog(@"resetting timer");
+        [checkBeaconsTimer invalidate];
+    }
+    checkBeaconsTimer = nil;
+}
+
+//Starts the timer to reload the beacon Table each second (same time of the ranging, to show new beacons found and added to array)
+- (void) startUpBeaconsCheckTimer {
+    if (checkBeaconsTimer) {
+        NSLog(@"resetting timer");
+        [checkBeaconsTimer invalidate];
+    } else  {
+        NSLog(@"starting timer");
+    }
+    checkBeaconsTimer = nil;
+    
+    checkBeaconsTimer = [NSTimer scheduledTimerWithTimeInterval:kReloadBeaconTableInterval
+                                                              target:self
+                                                            selector:@selector(reloadBeaconTable)
+                                                            userInfo:nil
+                                                             repeats:YES];
+}
+
+//Simulate Rate app alert when Rate button is clicked
+- (IBAction)rateApp:(id)sender
+{
+    //show alert
+    NSString *alertText = @"We'd love it if you could take a minute to review our app.";
+    
+    UIAlertView *alertMessage = [[UIAlertView alloc] initWithTitle:@"Rate our app"
+                                                           message:alertText
+                                                          delegate:nil
+                                                 cancelButtonTitle:@"OK"
+                                                 otherButtonTitles:nil];
+    alertMessage.delegate = self;
+    alertMessage.tag = 0;
+    [alertMessage show];
+}
+
+- (void)reloadBeaconTable
+{
+    self.beacons = [[BKMBeaconManager sharedInstance]getBeaconsCache];
+    [self.beaconsTableView reloadData];
+}
+
+//Clear current daily user chat
+- (IBAction)clearChat:(id)sender
+{
+    [BKMMessageApi sharedInstance].clearChat = YES;
+}
+
+//geofence switch: set a BOOL on GeofenceManager class. If geofence is enabled, we always consider the real value if we are inside of not the museum, if is disabled, it’s like we are always inside the museum
+- (IBAction)toggleGeofenceSwitch:(id)sender
+{
+    UISwitch *sw = (UISwitch *)sender;
+    if (sw.on) {
+        [BKMGeoFenceManager sharedInstance].geofenceEnabled = YES;
+    }
+    else
+    {
+        [BKMGeoFenceManager sharedInstance].geofenceEnabled = NO;
+    }
+}
+
+//beacon switch: start/stop the ranging. When we start the ranging, we start the timer too. Otherwise, we invalidate the timer and reset the beacons cache
+- (IBAction)toggleBeaconSwitch:(id)sender
+{
+    UISwitch *sw = (UISwitch *)sender;
+    if (sw.on) {
+        [[BKMBeaconManager sharedInstance]startBeaconRanging];
+        self.beacons = [[BKMBeaconManager sharedInstance]getBeaconsCache];
+        [self startUpBeaconsCheckTimer];
+    }
+    else
+    {
+        [[BKMBeaconManager sharedInstance]stopBeaconRanging];
+        [[BKMBeaconManager sharedInstance] resetCache];
+        if (checkBeaconsTimer) {
+            NSLog(@"resetting timer");
+            [checkBeaconsTimer invalidate];
+        }
+        checkBeaconsTimer = nil;
+
+    }
+    [self.beaconsTableView reloadData];
+    
+}
+
+//UUID switch: when we change UUID of beacons, we create a new region with selected UUID, and we start monitoring beacons for that region 
+- (IBAction)toggleUuidSwitch:(id)sender
+{
+    UISwitch *sw = (UISwitch *)sender;
+    
+    //reset old beacon data and stop ranging with previous UUID
+    [[BKMBeaconManager sharedInstance]stopBeaconRanging];
+    [[BKMBeaconManager sharedInstance] resetCache];
+
+    //stop and invalidate the timer
+    if (checkBeaconsTimer) {
+        NSLog(@"resetting timer");
+        [checkBeaconsTimer invalidate];
+    }
+    checkBeaconsTimer = nil;
+    
+    NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:sw.on ? kIbeaconUUID : kIbeaconUUIDTest];
+
+    //setup region with new UUID
+    [BKMBeaconManager sharedInstance].beaconRegion = nil;
+    [BKMBeaconManager sharedInstance].beaconRegion = [[CLBeaconRegion alloc] initWithProximityUUID:uuid
+                                                        identifier:@"com.brooklymuseum.beacon.region"];
+    
+    [[BKMBeaconManager sharedInstance] startBeaconRanging];
+    
+    //get all beacons and reload table
+    self.beacons = [[BKMBeaconManager sharedInstance]getBeaconsCache];
+	//start the timer again
+    [self startUpBeaconsCheckTimer];
+
+    [self.beaconsTableView reloadData];
+    
+}
+
+@end

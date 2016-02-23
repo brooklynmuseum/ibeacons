@@ -1,0 +1,76 @@
+// Beacon Log class: shows the list of messages with beacon associated (or no beacon text) and the count of messages with beacon set, without beacon set and with invalid beacon set.
+
+@implementation BKMBeaconLogViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    self.menuBarView = [[NSBundle mainBundle] loadNibNamed:@"BKMTopBarView" owner:nil options:nil][0];
+    [self.view addSubview:self.menuBarView];
+    self.menuBarView.delegate = self;
+    
+    messageManager = [BKMMessageApi sharedInstance];
+    
+    messagesWithInvalidBeacon = 0;
+    messagesWithValidBeacon = 0;
+    
+	// Messages list reversed (first object is the last message)
+    messages = [[messageManager.messages reverseObjectEnumerator] allObjects];
+    
+	// Messages counters
+    for (NSArray *arr in messages) {
+        BKMMessage *message = arr[0];
+        if (message.beaconLocationMinor && ![message.beaconLocationMinor isEqualToString:@""]) 
+		{
+		    //isKnownBeacon method returns YES if the beacon is on museum beacons list, NO otherwise
+            if ([[BKMBeaconManager sharedInstance] isKnownBeacon:message.beaconLocationMajor andMinor:message.beaconLocationMinor]) {
+                messagesWithValidBeacon ++;
+            }
+            else
+            {
+                messagesWithInvalidBeacon ++;
+            }
+        }
+    }
+    
+	//Set counters
+    self.messageWValidBeacon.text = [NSString stringWithFormat:@"%d", messagesWithValidBeacon];
+    self.messageWInvalidBeacon.text = [NSString stringWithFormat:@"%d", messagesWithInvalidBeacon];
+    self.messageWoutBeacon.text = [NSString stringWithFormat:@"%u", messages.count - (messagesWithInvalidBeacon + messagesWithValidBeacon)];
+    
+    [self.messagesTableView registerNib:[UINib nibWithNibName:@"BKMBeaconLogTableViewCell" bundle:nil] forCellReuseIdentifier:@"beaconLogCell"];
+    
+    [self.messagesTableView reloadData];
+
+}
+
+// Called when reset button is clicked. Clear the log
+- (IBAction)resetLog:(id)sender
+{
+    [messageManager.messages removeAllObjects];
+    messages = [NSArray new];
+    self.messageWInvalidBeacon.text = @"0";
+    self.messageWValidBeacon.text = @"0";
+    self.messageWoutBeacon.text = @"0";
+    [self.messagesTableView reloadData];
+}
+
+// isKnownBeacon method taken from BeaconManager class
+//beaconsList are the museum known beacons. We compare the found beacon on cache with museum beacons, and we return YES if we found it, NO otherwise
+
+- (BOOL) isKnownBeacon:(NSString *)majorValue andMinor:(NSString *)minorValue
+{
+    if (appDelegate.beaconsList) {
+        for (BKMBeaconInfo *beaconInfo in appDelegate.beaconsList) {
+            if ([[NSString stringWithFormat:@"%@",beaconInfo.beaconMajor] isEqualToString:majorValue]) {
+                for (NSString *bMinor in beaconInfo.beaconMinors) {
+                    if ([bMinor isEqualToString:minorValue]) {
+                        return YES;
+                    }
+                }
+            }
+        }
+    }
+    return NO;
+}
+

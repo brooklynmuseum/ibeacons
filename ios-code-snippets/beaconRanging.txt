@@ -1,0 +1,224 @@
+//Beacon Manager class: this class has all methods related to beacon management, and delegates methods of CLLocationManager library
+@implementation BKMBeaconManager
+
+static BKMBeaconManager* obj = nil;
+
++ (BKMBeaconManager*)sharedInstance
+{
+    
+    static BKMBeaconManager *_sharedInstance = nil;
+    
+    static dispatch_once_t oncePredicate;
+    
+    dispatch_once(&oncePredicate, ^{
+        _sharedInstance = [[BKMBeaconManager alloc] init];
+        
+    });
+    return _sharedInstance;
+}
+
+
+-(id)init {
+    self = [super init];
+    if (self) {
+        
+		//cache array, size 10
+        foundBeaconsCache = [[NSMutableArray alloc] initWithCapacity:kMaxSizeOfBeaconArray];
+        
+        self.locationManager = [[CLLocationManager alloc] init];
+        self.locationManager.delegate = self;
+        
+        if ([self.locationManager respondsToSelector:@selector(requestWhenInUseAuthorization)]) {
+            // iOS8+
+            // Sending a message to avoid compile time error
+            [self.locationManager requestWhenInUseAuthorization];
+        }
+        
+        // Create a NSUUID with the same UUID as the broadcasting beacon
+        NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:kIbeaconUUID];
+        
+        // Setup a new region with that UUID and same identifier as the broadcasting beacon
+        self.beaconRegion = [[CLBeaconRegion alloc] initWithProximityUUID:uuid                                                             identifier:@"com.brooklymuseum.beacon.region"];
+        
+        // Tell location manager to start monitoring for the beacon region
+        //PROMPT TO USE YOUR CURRENT LOCATION
+        [self startBeaconRanging];
+        
+		// To manage background and foreground mode
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(appDidEnterForeground)
+                                                     name:UIApplicationDidBecomeActiveNotification
+                                                   object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(appDidEnterBackground)
+                                                     name:UIApplicationDidEnterBackgroundNotification
+                                                   object:nil];
+
+        
+        appDelegate = (BKMAppDelegate *)[UIApplication sharedApplication].delegate;
+        
+    }
+    return self;
+}
+
+// Delegate method: invoked when a region monitoring error has occurred
+-(void)locationManager:(CLLocationManager *)manager monitoringDidFailForRegion:(CLRegion *)region withError:(NSError *)error {
+    NSLog(@"Error occurred %@.", error);
+    [BKMLogUtils logError:kErrorBeaconMonitoring withMessage:@"Beacon monitor error" withError:error];
+}
+
+// Delegate method: called when general error occurs
+-(void)locationManager:(CLLocationManager *)manager didFailWithError:(NSError *)error {
+    NSLog(@"Error occurred %@.", error);
+    [BKMLogUtils logError:kErrorBeaconRanging withMessage:@"Beacon error" withError:error];
+}
+
+//Delegate method: invoked when a user enters in a region. Start beacon ranging here
+- (void)locationManager:(CLLocationManager*)manager didEnterRegion:(CLRegion*)region {
+    [self.locationManager startRangingBeaconsInRegion:self.beaconRegion];
+    NSLog(@"Beacon region entered.");
+}
+
+//Delegate method: invoked when a user exit form a region. Stop beacon ranging here
+-(void)locationManager:(CLLocationManager*)manager didExitRegion:(CLRegion*)region {
+    [self.locationManager stopRangingBeaconsInRegion:self.beaconRegion];
+    NSLog(@"Beacon region exited.");
+}
+
+//Add the beacon found to cache. If we already have 10 elements, we remove the oldest object
+-(void) addBeaconToCache:(CLBeacon *) newBeacon {
+    if (kMaxSizeOfBeaconArray == [foundBeaconsCache count]) {
+        //delete the first object to clear the cached beacons
+        [foundBeaconsCache removeObjectAtIndex:0];
+    }
+  	//Added the beacon and the timestamp
+    [foundBeaconsCache addObject:[NSMutableArray arrayWithObjects:newBeacon,[NSDate date], nil]];
+    
+}
+
+//locationManager:didRangeBeacons:inRegion: will return a list of beacons in proximity order.
+//The first beacon in the list will be the nearest.
+//However, there is one exception to this rule: if any beacons have a proximity of Unknown, then they will be at the top of the list (because their accuracy is -1).
+//To account for this, we simply filter out any Unknown beacons, and then we pick the first in the list.
+-(void)locationManager:(CLLocationManager*)manager didRangeBeacons:(NSArray*)beacons inRegion:(CLBeaconRegion*)region {
+    // Beacon found! Keep the first beacon before filtering out beacons with proximity -1
+    CLBeacon *firstBeaconFound = [beacons firstObject];
+    
+    //no beacons found
+    if (!firstBeaconFound) {
+        // this can be null
+        return;
+    }
+    
+    //if some beacon found, filter out beacons with proximity = -1 (Unknown)
+    if([beacons count] > 1) {
+        //filter out the -1's
+        beacons = [beacons filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"proximity != %d", CLProximityUnknown]];
+    };
+    
+    CLBeacon *newlyFoundBeacon;
+    
+    //check if any beacons are left after filtering out the -1's
+    if ([beacons count] > 0) {
+        //if some beacon is still in array after filtering, take the first (it's the nearest and with known proximity)
+        newlyFoundBeacon = [beacons firstObject];
+    } else {
+        newlyFoundBeacon = firstBeaconFound; // all beacons were filtered out so assign the original first beacon to the newly found beacon could be -1 but better than no beacons at all
+    }
+    
+    NSArray *lastBeaconArray = [foundBeaconsCache lastObject];
+    CLBeacon *lastBeaconFound = [lastBeaconArray objectAtIndex:0];
+    
+    //It compares the last beacon found with the last cache array object.
+    //(1) If the major/minor ID of the beacon is the same AND the distance is less than the object, it adds the beacon to the list.
+    //If the major/minor ID of the beacon is the same and the distance is more, then it is not added to the cache.
+    //(2) If the major/minor ID of the beacon is different from the last object, it is added to the bottom of the cache.
+    if (lastBeaconFound){
+        //compare the last beacon to make sure we aren't adding the same beacon to the cache
+        if(![self isTheSameBeacon:lastBeaconFound newBeacon:newlyFoundBeacon]) {
+            
+            [self addBeaconToCache:newlyFoundBeacon];
+           
+        } else {
+            //same beacon now compare accuracy, if more accurate reading then replace this beacon accuracy with the last record of this beacon
+            if ((newlyFoundBeacon.accuracy > -1 && lastBeaconFound.accuracy <= -1) || (newlyFoundBeacon.accuracy > -1 && (newlyFoundBeacon.accuracy < lastBeaconFound.accuracy))) {
+                [foundBeaconsCache replaceObjectAtIndex:[foundBeaconsCache count]-1 withObject:[NSMutableArray arrayWithObjects:newlyFoundBeacon,[NSDate date], nil]];
+            }
+        }
+    } else {
+        //not the same beacon. Always added on cache
+       [self addBeaconToCache:newlyFoundBeacon];
+    }
+    
+}
+
+-(void) startBeaconRanging {
+    NSLog(@"start ranging");
+    [self.locationManager startRangingBeaconsInRegion:self.beaconRegion];
+    [self.locationManager startMonitoringForRegion:self.beaconRegion];
+}
+
+
+-(void) stopBeaconRanging {
+    [self.locationManager stopRangingBeaconsInRegion:self.beaconRegion];
+    [self.locationManager stopMonitoringForRegion:self.beaconRegion];
+}
+
+// returns the closest Beacon
+-(CLBeacon *) closestBeacon {
+    // no beacons found
+    if ([foundBeaconsCache count] < 1) {
+        return nil;
+    }
+    
+    NSString *name;
+    
+    CLBeacon *closestBeacon;
+    
+	// scanning array to check if there is some beacon with accuracy -1
+    for (NSArray *beaconArray in [foundBeaconsCache reverseObjectEnumerator]) {
+		// the object at 0 position is the beacon
+        CLBeacon *beacon = [beaconArray objectAtIndex:0];
+        if (beacon.accuracy == -1  ) {
+            continue;
+        } else {
+            closestBeacon = beacon;
+            break;
+        }
+    }
+    
+	// if there is not closest beacon here, we keep the last object of array (it could be with accuracy -1)
+    if (!closestBeacon) {
+        NSArray *beaconArray  = [foundBeaconsCache lastObject];
+        closestBeacon = [beaconArray objectAtIndex:0];
+    }
+    name = [NSString stringWithFormat:@"%d", [closestBeacon.major intValue]];
+    
+    NSArray *foundBeaconArray = [foundBeaconsCache lastObject];
+    NSDate *dateBeaconFound = [foundBeaconArray objectAtIndex:1];
+	
+	//Check the date of beacon found: we return the beacon if time interval is less than 5 minutes 
+    if ([dateBeaconFound timeIntervalSinceNow] >= -300) {
+        return [foundBeaconArray objectAtIndex:0];
+    }
+    else {
+        return nil;
+    }
+
+    
+}
+
+// returns YES if it’s the same beacon, NO otherwise
+-(BOOL) isTheSameBeacon:(CLBeacon *) oldBeacon newBeacon:(CLBeacon *) newBeacon {
+// OLD CODE: was always returning NO. It’s a comparison  between objects, now between int values
+//    if (oldBeacon.minor == newBeacon.minor && oldBeacon.major == newBeacon.major) {
+//        return YES;
+//    }
+
+//Fixed code
+    if ([oldBeacon.minor isEqualToNumber:newBeacon.minor] && [oldBeacon.major isEqualToNumber:newBeacon.major]) {
+        return YES;
+    }
+    
+    return NO;
+}
